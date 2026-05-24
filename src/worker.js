@@ -1171,7 +1171,7 @@ function fromB64(text) {
 }
 
 async function readPrivacy(env) {
-  const defaults = { publicTopIPs: false, publicTopHosts: false, publicTimeline: false, publicFilters: false, aiVerboseData: false };
+  const defaults = { publicTopIPs: false, publicTopHosts: false, publicTimeline: false, publicFilters: false, hideAiPanel: false, aiVerboseData: false };
   const raw = await env.KV?.get(PRIVACY_KEY);
   if (!raw) return defaults;
   return { ...defaults, ...normalizePrivacy(JSON.parse(raw)) };
@@ -1188,6 +1188,7 @@ function normalizePrivacy(input) {
     publicTopHosts: Boolean(input.publicTopHosts),
     publicTimeline: Boolean(input.publicTimeline),
     publicFilters: Boolean(input.publicFilters),
+    hideAiPanel: Boolean(input.hideAiPanel),
     aiVerboseData: Boolean(input.aiVerboseData),
   };
 }
@@ -1436,7 +1437,7 @@ const INDEX_HTML = `<!doctype html>
       <label>时间范围<select id="rangeSelect"><option value="24">过去 24 小时</option><option value="12">过去 12 小时</option><option value="6">过去 6 小时</option><option value="1">过去 1 小时</option></select></label>
       <button id="refreshBtn">应用筛选</button>
     </section>
-    <section class="panel">
+    <section class="panel" id="aiPanel">
       <div class="row" style="justify-content:space-between"><h3>AI 分析</h3><button id="aiBtn" class="admin-only">AI 分析 24h</button></div>
       <div id="aiResult" class="notice muted">管理员登录后可基于当前筛选域名的 24 小时数据分析异常盗用、自动探测或正常波动。</div>
       <div id="analysisBlocked" class="notice muted privacy-hidden">当前账号未配置区域 ID，只能显示 Workers/Pages 用量进度，无法展示域名请求明细或 AI 分析。</div>
@@ -1476,7 +1477,7 @@ const INDEX_HTML = `<!doctype html>
     let accountCache = [];
     let pendingAiHost = "";
     const NO_ACCOUNT_MESSAGE = "当前还没有账号配置。请先登录后台添加 Cloudflare 账号后再查看分析或使用 AI 分析。";
-    let session = { admin: false, aiAvailable: false, privacy: { publicTopIPs: false, publicTopHosts: false, publicTimeline: false, publicFilters: false } };
+    let session = { admin: false, aiAvailable: false, privacy: { publicTopIPs: false, publicTopHosts: false, publicTimeline: false, publicFilters: false, hideAiPanel: false } };
     async function api(path, options = {}) {
       const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
       const contentType = res.headers.get("content-type") || "";
@@ -1487,7 +1488,7 @@ const INDEX_HTML = `<!doctype html>
     function fmt(n) { return Intl.NumberFormat("zh-CN").format(n || 0); }
     function bytes(n) { if (!n) return "0 B"; const units=["B","KB","MB","GB","TB"]; let i=0,v=n; while(v>=1024&&i<units.length-1){v/=1024;i++;} return v.toFixed(i?2:0)+" "+units[i]; }
     async function init() { session = await api("/api/session"); document.body.classList.toggle("admin", session.admin); $("loginEntry").classList.toggle("privacy-hidden", session.admin); applyPrivacy(session.privacy); if (session.admin) await loadAccounts(); await refresh(); }
-    function applyPrivacy(privacy) { const canFilter = session.admin || privacy.publicFilters; const canTimeline = session.admin || privacy.publicTimeline; const canTopIPs = session.admin || privacy.publicTopIPs; const canTopHosts = session.admin || privacy.publicTopHosts; $("accountFilter").classList.toggle("privacy-hidden", !canFilter); $("zoneFilter").classList.toggle("privacy-hidden", !canFilter); $("hostFilter").classList.toggle("privacy-hidden", !canFilter); $("projectFilter").classList.toggle("privacy-hidden", !canFilter); $("chartBlocked").classList.toggle("privacy-hidden", canTimeline); $("lineChart").classList.toggle("privacy-hidden", !canTimeline); $("ipBlocked").classList.toggle("privacy-hidden", canTopIPs); $("ipTableWrap").classList.toggle("privacy-hidden", !canTopIPs); $("hostBlocked").classList.toggle("privacy-hidden", canTopHosts); $("hostTableWrap").classList.toggle("privacy-hidden", !canTopHosts); }
+    function applyPrivacy(privacy) { const canFilter = session.admin || privacy.publicFilters; const canTimeline = session.admin || privacy.publicTimeline; const canTopIPs = session.admin || privacy.publicTopIPs; const canTopHosts = session.admin || privacy.publicTopHosts; $("aiPanel").classList.toggle("privacy-hidden", Boolean(privacy.hideAiPanel)); $("accountFilter").classList.toggle("privacy-hidden", !canFilter); $("zoneFilter").classList.toggle("privacy-hidden", !canFilter); $("hostFilter").classList.toggle("privacy-hidden", !canFilter); $("projectFilter").classList.toggle("privacy-hidden", !canFilter); $("chartBlocked").classList.toggle("privacy-hidden", canTimeline); $("lineChart").classList.toggle("privacy-hidden", !canTimeline); $("ipBlocked").classList.toggle("privacy-hidden", canTopIPs); $("ipTableWrap").classList.toggle("privacy-hidden", !canTopIPs); $("hostBlocked").classList.toggle("privacy-hidden", canTopHosts); $("hostTableWrap").classList.toggle("privacy-hidden", !canTopHosts); }
     function escapeHtml(value) { return String(value || "").replace(/[&<>"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch])); }
     function inlineMarkdown(value) { return escapeHtml(value).replace(new RegExp("\\\\*\\\\*([^*]+)\\\\*\\\\*", "g"), "<strong>$1</strong>"); }
     function renderMarkdown(text) { const lines = String(text || "").split(String.fromCharCode(10)); let html = ""; let list = ""; const closeList = () => { if (list) { html += "</" + list + ">"; list = ""; } }; const sectionTitle = /^(结论|风险等级|依据|可能原因|建议|完整数据)$/; for (const raw of lines) { const line = raw.trim(); if (!line) { closeList(); continue; } if (line.startsWith("#### ")) { closeList(); html += "<h4>" + inlineMarkdown(line.slice(5)) + "</h4>"; continue; } if (line.startsWith("### ")) { closeList(); html += "<h3>" + inlineMarkdown(line.slice(4)) + "</h3>"; continue; } if (sectionTitle.test(line)) { closeList(); html += "<h3>" + inlineMarkdown(line) + "</h3>"; continue; } const ordered = line.match(/^\d+[.、]\s*(.+)$/); if (ordered) { if (list !== "ol") { closeList(); html += "<ol>"; list = "ol"; } html += "<li>" + inlineMarkdown(ordered[1]) + "</li>"; continue; } if (line.startsWith("- ")) { if (list !== "ul") { closeList(); html += "<ul>"; list = "ul"; } html += "<li>" + inlineMarkdown(line.slice(2)) + "</li>"; continue; } closeList(); html += "<p>" + inlineMarkdown(line) + "</p>"; } closeList(); return html; }
@@ -1578,6 +1579,7 @@ const ADMIN_PANEL_HTML = `<!doctype html>
       <label class="check"><input id="publicTopHosts" type="checkbox"> 未登录公开 Top Host</label>
       <label class="check"><input id="publicTimeline" type="checkbox"> 未登录公开折线图</label>
       <label class="check"><input id="publicFilters" type="checkbox"> 未登录公开账号/主机筛选</label>
+      <label class="check"><input id="hideAiPanel" type="checkbox"> 全局隐藏首页 AI 分析卡片</label>
       <label class="check"><input id="aiVerboseData" type="checkbox"> AI 结果允许引用详细数据</label>
       <div class="row"><button id="savePrivacyBtn" type="button">保存隐私设置</button></div>
       <div id="privacyMsg" class="msg"></div>
@@ -1628,7 +1630,7 @@ const ADMIN_PANEL_HTML = `<!doctype html>
     }
     async function loadPrivacy() {
       const data = await api("/api/privacy");
-      for (const key of ["publicTopIPs", "publicTopHosts", "publicTimeline", "publicFilters", "aiVerboseData"]) $(key).checked = Boolean(data.privacy[key]);
+      for (const key of ["publicTopIPs", "publicTopHosts", "publicTimeline", "publicFilters", "hideAiPanel", "aiVerboseData"]) $(key).checked = Boolean(data.privacy[key]);
     }
     $("addAccountBtn").addEventListener("click", async () => {
       const msg = $("accountMsg");
@@ -1653,7 +1655,7 @@ const ADMIN_PANEL_HTML = `<!doctype html>
       msg.classList.remove("error");
       msg.textContent = "保存中...";
       try {
-        await api("/api/privacy", { method: "PUT", body: JSON.stringify({ publicTopIPs: $("publicTopIPs").checked, publicTopHosts: $("publicTopHosts").checked, publicTimeline: $("publicTimeline").checked, publicFilters: $("publicFilters").checked, aiVerboseData: $("aiVerboseData").checked }) });
+        await api("/api/privacy", { method: "PUT", body: JSON.stringify({ publicTopIPs: $("publicTopIPs").checked, publicTopHosts: $("publicTopHosts").checked, publicTimeline: $("publicTimeline").checked, publicFilters: $("publicFilters").checked, hideAiPanel: $("hideAiPanel").checked, aiVerboseData: $("aiVerboseData").checked }) });
         msg.textContent = "已保存";
       } catch (error) {
         msg.classList.add("error");
